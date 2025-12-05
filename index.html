@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Simulador Casa Térmicamente Eficiente — Completo</title>
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+  :root{
+    --bg:#e6f2f5;
+    --card:#ffffff;
+    --accent:#0b88a6;
+    --muted:#6b7a87;
+    --round:14px;
+  }
+  [data-theme="dark"]{
+    --bg:#0f1720;
+    --card:#0b1220;
+    --accent:#48b5d6;
+    --muted:#9aa8b3;
+  }
+  *{box-sizing:border-box}
+  body{
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    margin:0;
+    background:var(--bg);
+    color: #07202a;
+    padding:18px;
+    transition: background .25s ease;
+  }
+  header{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:14px}
+  h1{font-size:1.25rem;margin:0;color:var(--accent)}
+  .layout{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:360px 1fr;gap:18px}
+  .panel{
+    background:var(--card);
+    padding:14px;border-radius:var(--round);
+    box-shadow:0 6px 18px rgba(2,8,14,0.08);
+  }
+  label{font-weight:600;font-size:.95rem;color:var(--muted)}
+  select,input[type=number],button{width:100%;padding:8px;border-radius:8px;border:1px solid #d0d6db;margin-top:6px}
+  .small{font-size:.9rem;color:var(--muted);margin-top:6px}
+  .controls-group{margin-bottom:14px}
+  button.primary{background:var(--accent);color:white;border:none;padding:10px;border-radius:10px;font-weight:700;cursor:pointer}
+  .result-box{margin-top:12px;padding:12px;border-radius:10px}
+  .efficient{border:3px solid #1e9b46;background:linear-gradient(90deg,#e9fbf0,#f7fff8)}
+  .inefficient{border:3px solid #d04b4b;background:linear-gradient(90deg,#fff0f0,#fffaf0)}
+  .visual-area{display:flex;gap:12px;flex-direction:column}
+  .house-canvas{position:relative;height:420px;border-radius:12px;overflow:hidden;background:linear-gradient(180deg,#bfe9ff,#e9f7ff)}
+  .controls-row{display:flex;gap:8px}
+  .footer-hint{font-size:.85rem;color:var(--muted);margin-top:10px}
+  .legend{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .legend-item{display:flex;gap:6px;align-items:center;font-size:.9rem;color:var(--muted)}
+  .dot{width:18px;height:12px;border-radius:4px}
+  .heat-legend .dot{border-radius:3px}
+  /* Heat overlay - gradient will be updated dynamically */
+  #heatOverlay{
+    position:absolute;inset:0;pointer-events:none;mix-blend-mode:multiply;transition:opacity .4s ease;
+  }
+  /* Particle canvas for heat/air flow */
+  #particles{
+    position:absolute;inset:0;z-index:6;pointer-events:none;
+  }
+
+  .house-svg{position:absolute;left:50%;transform:translateX(-50%);top:18px;z-index:5;width:58%;height:auto}
+  .house-infobox{position:absolute;right:10px;bottom:10px;background:rgba(255,255,255,0.9);padding:8px;border-radius:8px;z-index:8; font-size:.9rem}
+  .daynight{display:flex;gap:8px;align-items:center}
+  .chart-card{padding:12px;border-radius:10px}
+  /* animated airflow CSS */
+  .airflow {
+    position:absolute;z-index:7;inset:0;pointer-events:none;
+  }
+  /* responsive */
+  @media (max-width:980px){
+    .layout{grid-template-columns:1fr; padding-bottom:40px}
+    .house-svg{width:75%}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🏡 Simulador: Casa Térmicamente Eficiente (completo)</h1>
+    <div class="small">Cambia la ubicación/temperatura y los materiales para ver gráficos, animaciones y la representación de la casa.</div>
+  </div>
+
+  <div style="display:flex;gap:8px;align-items:center">
+    <div class="daynight">
+      <label for="themeToggle" class="small">Modo Día/Noche</label>
+      <select id="themeToggle" onchange="toggleTheme(this.value)">
+        <option value="light">Día</option>
+        <option value="dark">Noche</option>
+      </select>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- PANEL IZQUIERDO: CONTROLES -->
+  <section class="panel" aria-labelledby="controlsTitle">
+    <h2 id="controlsTitle" style="margin-top:0">Controles</h2>
+
+    <div class="controls-group">
+      <label>1) Ubicación (temperatura media anual aprox.)</label>
+      <select id="ubicacion" onchange="onLocationChange()">
+        <option value="">-- Seleccionar --</option>
+        <option value="5">Ushuaia — 5 °C</option>
+        <option value="12">Bariloche — 12 °C</option>
+        <option value="18">Buenos Aires — 18 °C</option>
+        <option value="28">Santiago del Estero — 28 °C</option>
+        <option value="32">Dubai — 32 °C</option>
+        <option value="24">Ciudad de México — 24 °C</option>
+        <option value="8">Múnich — 8 °C</option>
+      </select>
+      <div class="small">O ingresá una temperatura manual si querés simular un microclima.</div>
+      <input id="tempManual" type="number" placeholder="Temperatura media (°C)" oninput="onTempManual()" style="margin-top:8px">
+      <div class="small">Temperatura tomada por el simulador: <b id="tempFinal">-- °C</b></div>
+    </div>
+
+    <div class="controls-group">
+      <label>2) Materiales — paredes</label>
+      <select id="pared" onchange="updateVisuals()">
+        <option value="baja" data-score="1">Ladrillo hueco (aislación baja)</option>
+        <option value="media" data-score="2">Ladrillo+aislante (aislación media)</option>
+        <option value="alta" data-score="3">Madera + lana de vidrio (aislación alta)</option>
+      </select>
+      <div class="small">Seleccioná también techo, ventanas y ventilación.</div>
+    </div>
+
+    <div class="controls-group">
+      <label>Techo</label>
+      <select id="techo" onchange="updateVisuals()">
+        <option value="baja" data-score="1">Chapa sin aislante</option>
+        <option value="media" data-score="2">Chapa con aislante</option>
+        <option value="alta" data-score="3">Teja + aislante</option>
+      </select>
+    </div>
+
+    <div class="controls-group">
+      <label>Ventanas</label>
+      <select id="ventana" onchange="updateVisuals()">
+        <option value="baja" data-score="1">Vidrio simple</option>
+        <option value="media" data-score="2">Doble vidrio</option>
+        <option value="alta" data-score="3">DVH (doble hermético)</option>
+      </select>
+    </div>
+
+    <div class="controls-group">
+      <label>Ventilación</label>
+      <select id="ventilacion" onchange="updateVisuals()">
+        <option value="baja" data-flow="0.6">Baja ventilación</option>
+        <option value="media" data-flow="1.0">Media ventilación (ventilación cruzada)</option>
+        <option value="alta" data-flow="1.5">Alta ventilación (paneles, ventiladores)</option>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:6px">
+      <button class="primary" onclick="calcularEficiencia()">Calcular eficiencia</button>
+      <button onclick="resetAll()" style="padding:10px;border-radius:10px">Reset</button>
+    </div>
+
+    <div id="resultadoCard" class="result-box" style="margin-top:10px;display:none"></div>
+
+    <div class="footer-hint">
+      <b>Nota didáctica:</b> en climas fríos conviene alta aislación y ventilación controlada; en climas cálidos conviene ventilación elevada y materiales que no acumulen calor.
+    </div>
+  </section>
+
+  <!-- PANEL DERECHO: VISUAL Y GRÁFICOS -->
+  <section class="panel visual-area" aria-labelledby="visualTitle">
+
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h2 id="visualTitle" style="margin:0">Visualización & Animaciones</h2>
+      <div class="legend">
+        <div class="legend-item heat-legend"><div class="dot" style="background:linear-gradient(90deg,#3ba8ff,#ffb34d)"></div> <span>Gradiente: frío → caliente</span></div>
+        <div class="legend-item"><div style="width:16px;height:10px;background:#ffffff;border-radius:3px;border:1px solid #ccc"></div><span>Casa</span></div>
+      </div>
+    </div>
+
+    <div class="house-canvas panel" style="position:relative;">
+      <!-- overlay that represents heat diffusion -->
+      <canvas id="heatOverlay"></canvas>
+      <!-- particles and airflow -->
+      <canvas id="particles"></canvas>
+
+      <!-- simple responsive SVG house (interactive) -->
+      <svg id="houseSVG" class="house-svg" viewBox="0 0 600 420" xmlns="http://www.w3.org/2000/svg" aria-label="Casa interactiva">
+        <!-- Ground -->
+        <rect x="0" y="370" width="600" height="50" fill="#dff0d8"/>
+        <!-- House body -->
+        <g id="houseBody">
+          <rect id="wall" x="140" y="170" width="320" height="180" rx="8" ry="8" fill="#f6f6f6" stroke="#d0d6db"/>
+          <!-- roof -->
+          <polygon id="roof" points="130,170 300,60 470,170" fill="#c54b2f" stroke="#9b2f20"/>
+          <!-- door -->
+          <rect x="280" y="270" width="40" height="80" fill="#8b5a2b" stroke="#5c3b22"/>
+          <!-- windows -->
+          <g id="windows">
+            <rect id="win1" x="160" y="210" width="70" height="50" rx="4" fill="#bfe1ff" stroke="#8fbadb"/>
+            <rect id="win2" x="370" y="210" width="70" height="50" rx="4" fill="#bfe1ff" stroke="#8fbadb"/>
+          </g>
+        </g>
+      </svg>
+
+      <!-- infobox with quick stats -->
+      <div class="house-infobox" id="houseInfo">
+        <div><b>Estado:</b> <span id="statusBadge">--</span></div>
+        <div><b>Temp. exterior:</b> <span id="infoTemp">-- °C</span></div>
+        <div><b>Índice aislamiento:</b> <span id="infoAislamiento">--</span></div>
+        <div><b>Ventilación:</b> <span id="infoVentilacion">--</span></div>
+      </div>
+
+      <!-- descriptive captions under the SVG -->
+      <div style="position:absolute;left:20px;bottom:10px;font-size:.9rem;color:var(--muted);z-index:9">
+        <div><b>Explicación:</b></div>
+        <div>🟦 Área azul = ventanas (transmisión de calor).</div>
+        <div>🧱 Paredes y techo cambian visualmente con la selección.</div>
+      </div>
+
+    </div>
+
+    <!-- Charts -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+      <div class="chart-card panel">
+        <canvas id="effChart" height="200"></canvas>
+        <div class="small">Gráfico: Comparación de puntaje de aislamiento vs ventilación.</div>
+      </div>
+
+      <div class="chart-card panel">
+        <canvas id="tempChart" height="200"></canvas>
+        <div class="small">Curva: Temperatura interna estimada a lo largo del día (simulada).</div>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<script>
+/* -------------------------
+   UTILIDADES Y ESTADO
+   ------------------------- */
+const state = {
+  tempExterior: null,
+  paredScore: 2,
+  techoScore: 2,
+  ventanaScore: 2,
+  ventilacionFlow: 1.0,
+  internalTempSeries: [],
+  theme: 'light'
+};
+
+function toggleTheme(val){
+  state.theme = val === 'dark' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', state.theme === 'dark' ? 'dark' : 'light');
+}
+
+/* Inicializar valores por defecto */
+document.getElementById('ubicacion').value = "";
+document.getElementById('tempManual').value = "";
+
+/* -------------------------
+   SINCRONIZAR TEMPERATURAS
+   ------------------------- */
+function onLocationChange(){
+  const sel = document.getElementById('ubicacion');
+  const temp = sel.value;
+  if(temp){
+    document.getElementById('tempManual').value = "";
+    state.tempExterior = Number(temp);
+  } else {
+    state.tempExterior = null;
+  }
+  updateTempUI();
+  updateVisuals();
+}
+
+function onTempManual(){
+  const m = document.getElementById('tempManual').value;
+  if(m !== ""){
+    state.tempExterior = Number(m);
+    document.getElementById('ubicacion').value = "";
+  } else {
+    state.tempExterior = null;
+  }
+  updateTempUI();
+  updateVisuals();
+}
+
+function updateTempUI(){
+  const t = state.tempExterior;
+  document.getElementById('tempFinal').innerText = (t === null ? '--' : t + ' °C');
+  document.getElementById('infoTemp').innerText = (t === null ? '-- °C' : t + ' °C');
+}
+
+/* -------------------------
+   OBTENER SCORES DE SELECTS
+   ------------------------- */
+function parseScore(selectId){
+  const sel = document.getElementById(selectId);
+  const opt = sel.options[sel.selectedIndex];
+  const s = Number(opt.getAttribute('data-score') || 2);
+  return s;
+}
+function parseFlow(selectId){
+  const sel = document.getElementById(selectId);
+  return Number(sel.options[sel.selectedIndex].getAttribute('data-flow') || 1.0);
+}
+
+/* -------------------------
+   ACTUALIZAR VISUALES SVG
+   ------------------------- */
+function updateVisuals(){
+  // actualizar estado
+  state.paredScore = parseScore('pared');
+  state.techoScore = parseScore('techo');
+  state.ventanaScore = parseScore('ventana');
+  state.ventilacionFlow = parseFlow('ventilacion');
+
+  // Cambiar apariencia paredes según aislación
+  const wall = document.getElementById('wall');
+  const roof = document.getElementById('roof');
+  const win1 = document.getElementById('win1');
+  const win2 = document.getElementById('win2');
+
+  // paredes: color más oscuro y textura "sólida" si buen aislante
+  if(state.paredScore === 1){
+    wall.setAttribute('fill', '#f6f6f6');
+    wall.setAttribute('stroke', '#d0d6db');
+  } else if(state.paredScore === 2){
+    wall.setAttribute('fill', '#efecec');
+    wall.setAttribute('stroke', '#cfcfcf');
+  } else {
+    wall.setAttribute('fill', '#f0efe6'); // aspecto de madera/aislante
+    wall.setAttribute('stroke', '#d1caa8');
+  }
+
+  // techo
+  if(state.techoScore === 1){
+    roof.setAttribute('fill','#c54b2f'); roof.setAttribute('stroke','#9b2f20');
+  } else if(state.techoScore === 2){
+    roof.setAttribute('fill','#b36b4f'); roof.setAttribute('stroke','#7a4232');
+  } else {
+    roof.setAttribute('fill','#8b6b3f'); roof.setAttribute('stroke','#5e4328');
+  }
+
+  // ventanas: opacidad menor si doble vidrio
+  const winOpacity = state.ventanaScore === 1 ? 1.0 : (state.ventanaScore === 2 ? 0.75 : 0.55);
+  win1.setAttribute('fill', '#bfe1ff');
+  win2.setAttribute('fill', '#bfe1ff');
+  win1.setAttribute('opacity', winOpacity);
+  win2.setAttribute('opacity', winOpacity);
+
+  // actualizar infobox
+  document.getElementById('infoAislamiento').innerText = `${state.paredScore + state.techoScore + state.ventanaScore} (mayor = mejor)`;
+  document.getElementById('infoVentilacion').innerText = `${state.ventilacionFlow} (flujo relativo)`;
+
+  // actualizar heat overlay visuals
+  updateHeatOverlay();
+  // reiniciar partículas para ajustar por flujo
+  initParticles();
+}
+
+/* -------------------------
+   CALCULAR EFICIENCIA
+   ------------------------- */
+function calcularEficiencia(){
+  if(state.tempExterior === null){
+    alert('Ingresá o seleccioná una temperatura/ubicación primero.');
+    return;
+  }
+
+  const puntaje = state.paredScore + state.techoScore + state.ventanaScore; // mínimo 3, máximo 9
+  const ventilacion = state.ventilacionFlow;
+
+  // reglas simples:
+  let recomendado = '';
+  let efficient = false;
+  if(state.tempExterior <= 15){
+    // clima frío -> buscar puntaje alto y ventilación moderada/baja
+    if(puntaje >= 7 && ventilacion <= 1.0) { efficient = true; recomendado = 'Muy eficiente para clima frío.'}
+    else if(puntaje >=5) { recomendado = 'Aceptable — mejorar ventilación controlada.'}
+    else { recomendado = 'Ineficiente — aumentar aislación y reducir infiltraciones.'}
+  } else {
+    // clima cálido -> ventilación alta y puntaje no excesivamente alto (para no atrapar calor)
+    if(ventilacion >= 1.5 && puntaje <= 6) { efficient = true; recomendado = 'Muy eficiente para clima cálido.'}
+    else if(ventilacion >= 1.0) { recomendado = 'Aceptable — podría mejorar shading y ventilación.'}
+    else { recomendado = 'Ineficiente — aumentar ventilación y reducir ganancia térmica.'}
+  }
+
+  // mostrar resultado
+  const resCard = document.getElementById('resultadoCard');
+  resCard.style.display = 'block';
+  resCard.className = 'result-box ' + (efficient ? 'efficient' : 'inefficient');
+  resCard.innerHTML = `<div style="font-size:1.05rem"><b>Resultado:</b> ${efficient ? 'Eficiente' : 'No eficiente'}</div>
+    <div style="margin-top:6px">${recomendado}</div>
+    <div style="margin-top:6px;color:var(--muted)">Puntaje aislación: ${puntaje} · Flujo ventilación: ${ventilacion}</div>`;
+
+  document.getElementById('statusBadge').innerText = efficient ? 'Eficiente' : 'Ineficiente';
+
+  // simular curva interna
+  simulateInternalTemperature();
+  // actualizar charts
+  updateCharts();
+}
+
+/* -------------------------
+   SIMULACIÓN DE TEMPERATURA INTERNA
+   ------------------------- */
+function simulateInternalTemperature(){
+  // Simula 24 horas. Modelo sencillo: T_internal_next = T_internal + (ext - int)*k_loss + ventilation_effect
+  const ext = state.tempExterior;
+  const insulationFactor = (state.paredScore + state.techoScore + state.ventanaScore) / 9; // 0.333.. a 1
+  const k_loss = 0.25 * (1 - insulationFactor); // pérdidas mayores si aislación baja
+  const ventilationEffect = 0.6 * (state.ventilacionFlow - 1); // puede enfriar o calentar según sign
+  let T = ext; // asumimos inicio igual al exterior
+  const series = [];
+  for(let h=0; h<24; h++){
+    // simular pequeña oscilación diurna (más caliente al mediodía)
+    const diurnal = 6 * Math.sin((Math.PI*2)*(h/24) - Math.PI/2) ; // -6 a +6
+    const extHour = ext + diurnal;
+    // cálculo:
+    T = T + (extHour - T) * k_loss - ventilationEffect * 0.7;
+    // para climas fríos, ventilación incrementa pérdida (ventilationEffect negativo)
+    // redondear
+    series.push(Number(T.toFixed(2)));
+  }
+  state.internalTempSeries = series;
+}
+
+/* -------------------------
+   CHART.JS - INICIALIZACIÓN
+   ------------------------- */
+const effCtx = document.getElementById('effChart').getContext('2d');
+const tempCtx = document.getElementById('tempChart').getContext('2d');
+
+const effChart = new Chart(effCtx, {
+  type:'bar',
+  data:{
+    labels:['Aislación (pared+techo+vent)','Ventilación (relativa)'],
+    datasets:[{
+      label:'Puntaje',
+      data:[3,1],
+      backgroundColor:['rgba(11,136,166,0.9)','rgba(100,150,200,0.9)'],
+      borderRadius:6
+    }]
+  },
+  options:{
+    scales:{y:{beginAtZero:true}},
+    plugins:{legend:{display:false}},
+    maintainAspectRatio:false
+  }
+});
+
+const tempChart = new Chart(tempCtx,{
+  type:'line',
+  data:{
+    labels: Array.from({length:24}, (_,i)=> i + ':00'),
+    datasets:[{
+      label:'Temp interna (°C)',
+      data: Array(24).fill(null),
+      tension:0.35,
+      fill:true,
+      backgroundColor:'rgba(255,180,120,0.12)',
+      borderColor:'rgba(255,120,20,0.9)',
+      pointRadius:2
+    }]
+  },
+  options:{
+    scales:{
+      y:{beginAtZero:false}
+    },
+    plugins:{legend:{display:false}},
+    maintainAspectRatio:false
+  }
+});
+
+function updateCharts(){
+  const puntaje = state.paredScore + state.techoScore + state.ventanaScore;
+  effChart.data.datasets[0].data = [puntaje, state.ventilacionFlow];
+  effChart.update();
+
+  tempChart.data.datasets[0].data = state.internalTempSeries;
+  tempChart.update();
+}
+
+/* -------------------------
+   HEAT OVERLAY: canvas con gradiente que representa difusión de calor
+   ------------------------- */
+const heatCanvas = document.getElementById('heatOverlay');
+const particlesCanvas = document.getElementById('particles');
+function resizeCanvases(){
+  const container = document.querySelector('.house-canvas');
+  [heatCanvas, particlesCanvas].forEach(c => {
+    c.width = container.clientWidth;
+    c.height = container.clientHeight;
+    c.style.width = c.width + 'px';
+    c.style.height = c.height + 'px';
+  });
+}
+window.addEventListener('resize', () => { resizeCanvases(); drawHeatOverlay(); initParticles(); });
+resizeCanvases();
+
+/* Heat overlay drawing — gradient interpolated by external vs internal tendency */
+function drawHeatOverlay(){
+  const ctx = heatCanvas.getContext('2d');
+  ctx.clearRect(0,0,heatCanvas.width,heatCanvas.height);
+
+  // decide gradient colors based on external temp
+  const ext = state.tempExterior === null ? 20 : state.tempExterior;
+  // map ext to 0..1
+  const norm = Math.max(0, Math.min(1, (ext + 10) / 50)); // -10->0, 40->1
+  // color cold -> warm
+  const cold = {r:59,g:168,b:255}; // azul
+  const warm = {r:255,g:179,b:77}; // naranja
+  const r = Math.round(cold.r * (1-norm) + warm.r * norm);
+  const g = Math.round(cold.g * (1-norm) + warm.g * norm);
+  const b = Math.round(cold.b * (1-norm) + warm.b * norm);
+
+  // gradient center simulating heat gain based on insulation (worse isolation -> more spread)
+  const spread = 0.2 + (1 - ((state.paredScore + state.techoScore + state.ventanaScore)/9)) * 0.7;
+  const grd = ctx.createRadialGradient(
+    heatCanvas.width * 0.5, heatCanvas.height * 0.45, heatCanvas.width * 0.08,
+    heatCanvas.width * 0.5, heatCanvas.height * 0.45, heatCanvas.width * (0.22 + spread)
+  );
+  grd.addColorStop(0, `rgba(${r},${g},${b},${0.75})`);
+  grd.addColorStop(0.4, `rgba(${r},${g},${b},${0.35})`);
+  grd.addColorStop(1, `rgba(${r},${g},${b},0)`);
+  ctx.fillStyle = grd;
+  ctx.fillRect(0,0,heatCanvas.width,heatCanvas.height);
+}
+
+/* -------------------------
+   PARTICLES / AIR FLOW (canvas animation)
+   ------------------------- */
+let particles = [];
+let particleCtx;
+let particleAnimId;
+
+function initParticles(){
+  cancelAnimationFrame(particleAnimId);
+  particleCtx = particlesCanvas.getContext('2d');
+  const w = particlesCanvas.width;
+  const h = particlesCanvas.height;
+  particles = [];
+  const count = Math.round(60 * state.ventilacionFlow); // more ventilation -> more particles
+  for(let i=0;i<count;i++){
+    particles.push({
+      x: Math.random()*w,
+      y: Math.random()*h,
+      vx: (Math.random()-0.5) * 0.3 * state.ventilacionFlow,
+      vy: (Math.random()-0.5) * 0.8 * state.ventilacionFlow,
+      life: Math.random()*100 + 50,
+      size: Math.random()*2 + 1,
+      alpha: Math.random()*0.7 + 0.3
+    });
+  }
+  animateParticles();
+}
+
+function animateParticles(){
+  const ctx = particleCtx;
+  const w = particlesCanvas.width;
+  const h = particlesCanvas.height;
+  ctx.clearRect(0,0,w,h);
+  for(let p of particles){
+    p.x += p.vx + Math.sin(Date.now()/1000 + p.x) * 0.2;
+    p.y += p.vy;
+    p.life -= 0.6;
+    if(p.life <= 0 || p.x < -10 || p.x > w+10 || p.y < -10 || p.y > h+10){
+      // respawn
+      p.x = Math.random()*w;
+      p.y = Math.random()*h;
+      p.life = Math.random()*120 + 50;
+      p.vx = (Math.random()-0.5) * 0.5 * state.ventilacionFlow;
+      p.vy = (Math.random()-0.5) * 1.1 * state.ventilacionFlow;
+    }
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255,255,255,${0.05 + (p.alpha*0.2)})`;
+    ctx.arc(p.x,p.y,p.size,0,Math.PI*2);
+    ctx.fill();
+    // draw flow lines if ventilation is high
+    if(state.ventilacionFlow > 1.1){
+      ctx.beginPath();
+      ctx.moveTo(p.x,p.y);
+      ctx.lineTo(p.x - p.vx*6, p.y - p.vy*6);
+      ctx.strokeStyle = `rgba(255,255,255,${0.04 + p.alpha*0.08})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+  particleAnimId = requestAnimationFrame(animateParticles);
+}
+
+/* -------------------------
+   Inicializar por defecto
+   ------------------------- */
+updateVisuals();
+initParticles();
+drawHeatOverlay();
+
+/* -------------------------
+   RESET
+   ------------------------- */
+function resetAll(){
+  document.getElementById('ubicacion').value = '';
+  document.getElementById('tempManual').value = '';
+  document.getElementById('pared').value = 'media';
+  document.getElementById('techo').value = 'media';
+  document.getElementById('ventana').value = 'media';
+  document.getElementById('ventilacion').value = 'media';
+  state.tempExterior = null;
+  state.paredScore = 2;
+  state.techoScore = 2;
+  state.ventanaScore = 2;
+  state.ventilacionFlow = 1.0;
+  document.getElementById('resultadoCard').style.display = 'none';
+  document.getElementById('statusBadge').innerText = '--';
+  updateTempUI();
+  updateVisuals();
+  updateCharts();
+}
+
+/* -------------------------
+   SIMULACIÓN INMEDIATA AL CAMBIAR SELECTS (opcional)
+   ------------------------- */
+document.querySelectorAll('#pared,#techo,#ventana,#ventilacion').forEach(el => {
+  el.addEventListener('change', () => {
+    // recalcular en tiempo real y actualizar charts
+    updateVisuals();
+    // opcional: no recalcular la "eficiencia" completa hasta que el usuario presione Calcular
+  });
+});
+
+/* -------------------------
+   Acomodar canvas overlay tamaño inicial
+   ------------------------- */
+setTimeout(()=>{ resizeCanvases(); drawHeatOverlay(); initParticles(); }, 150);
+
+/* -------------------------
+   Evento: mostrar animación de gradiente suave cuando temp cambia por fuera
+   ------------------------- */
+const observerTemp = new MutationObserver(()=>{ drawHeatOverlay(); });
+observerTemp.observe(document.getElementById('tempFinal'), {childList:true});
+
+/* -------------------------
+   EXTRAS: animación sutil del sol/luna (tema) - no necesaria
+   ------------------------- */
+
+</script>
+
+</body>
+</html>
